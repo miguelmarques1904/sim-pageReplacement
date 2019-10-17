@@ -17,8 +17,8 @@ typedef struct pte_t {
 
 
 int parse_request(char *line, int *page, char **rw);
-int locate_dram(int page_id, char *rw, pte **table, int size);
-int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *nvram_writes);
-int place(int page_id, char *rw, pte **table, int size);
-int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size);
+int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes);
+int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *dram_writes, int *nvram_writes);
+int place(int page_id, char *rw, pte **table, int size, int *dram_writes);
+int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size, int *dram_writes);
 void step(pte **table, int size);

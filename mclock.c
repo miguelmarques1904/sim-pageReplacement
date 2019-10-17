@@ -24,12 +24,14 @@ int parse_request(char *line, int *page, char **rw) {
     return 1;
 }
 
-int locate_dram(int page_id, char *rw, pte **table, int size) {
+int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) {
     for(int i=0; i < size; i++) {
         if((*table)[i].value == page_id) {
             if(!strcmp(rw, "w")) {
                 (*table)[i].dirty = 1;
                 (*table)[i].unset_count_dirty = UNSET_INTERVAL;
+
+                (*dram_writes)++;
             }
             (*table)[i].reference = 1;
             (*table)[i].unset_count_reference = UNSET_INTERVAL;
@@ -41,7 +43,7 @@ int locate_dram(int page_id, char *rw, pte **table, int size) {
     return 0;
 }
 
-int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *nvram_writes) {
+int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *dram_writes, int *nvram_writes) {
     for(int i=0; i < nvram_size; i++) {
         if((*nvram)[i].value == page_id) {
             (*nvram)[i].reference = 1;
@@ -55,14 +57,14 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
                 int j;
                 if((*nvram)[i].lazy) {
                     printf("LAZY\n");
-                    while(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size)) {
+                    while(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes)) {
                         step(dram, dram_size);
                         step(nvram, dram_size);
                     }
 
                     (*nvram)[i].value = 0;
                 }
-                else if(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size)) {
+                else if(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes)) {
                     printf("NOT LAZY\n");
                     // DRAM is full and lazy bit is unset
                     (*nvram_writes)++;
@@ -82,13 +84,15 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
     return 0;
 }
 
-int place(int page_id, char *rw, pte **table, int size) {
+int place(int page_id, char *rw, pte **table, int size, int *dram_writes) {
     for(int i=0; i < size; i++) {
         if((*table)[i].value == 0) {
             (*table)[i].value = page_id;
             if(!strcmp(rw, "w")) {
                 (*table)[i].dirty = 1;
                 (*table)[i].unset_count_dirty = UNSET_INTERVAL;
+
+                (*dram_writes)++;
             }
             (*table)[i].reference = 1;
             (*table)[i].unset_count_reference = UNSET_INTERVAL;
@@ -99,7 +103,7 @@ int place(int page_id, char *rw, pte **table, int size) {
     return 0;
 }
 
-int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size) {
+int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size, int *dram_writes) {
     
     for(int i=0; i < dram_size; i++) {
         if(((*dram)[i].dirty == 0) || ((*dram)[i].reference == 0)) {
@@ -128,6 +132,8 @@ int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int
             if(strcmp(rw, "w")) {
                 (*dram)[i].dirty = 1;
                 (*dram)[i].unset_count_dirty = UNSET_INTERVAL;
+
+                (*dram_writes)++;
             }
             (*dram)[i].reference = 1;
             (*dram)[i].unset_count_reference = UNSET_INTERVAL;
@@ -178,6 +184,7 @@ int main(int argc, char** argv) {
     int hits_dram = 0;
     int hits_nvram = 0;
     int nvram_writes = 0;
+    int dram_writes = 0;
 
     int page_accesses = 0;
 
@@ -199,12 +206,12 @@ int main(int argc, char** argv) {
 
         page_accesses++;
 
-        if(locate_dram(page, rw, &dram, dram_size)) {
+        if(locate_dram(page, rw, &dram, dram_size, &dram_writes)) {
             // DRAM Hit
             printf("DRAM HIT\n");
             hits_dram++;
         }
-        else if(locate_nvram(page, rw, &nvram, nvram_size, &dram, dram_size, &nvram_writes)) {
+        else if(locate_nvram(page, rw, &nvram, nvram_size, &dram, dram_size, &dram_writes, &nvram_writes)) {
             // NVRAM Hit
             printf("NVRAM HIT\n");
             hits_nvram++;
@@ -212,11 +219,11 @@ int main(int argc, char** argv) {
 
         // DRAM and NVRAM Miss
         // Find free space in DRAM
-        else if(!place(page, rw, &dram, dram_size)) {
+        else if(!place(page, rw, &dram, dram_size, &dram_writes)) {
             // DRAM full
             // Migrate or free a page from DRAM and place page
             printf("DRAM FULL\n");
-            while(!free_dram(page, rw, &dram, dram_size, &nvram, nvram_size)) {
+            while(!free_dram(page, rw, &dram, dram_size, &nvram, nvram_size, &dram_writes)) {
                 step(&dram, dram_size);
                 step(&nvram, nvram_size);
             }
@@ -239,12 +246,13 @@ int main(int argc, char** argv) {
     printf("Page Accesses: %d\n", page_accesses);
     printf("\n");
     printf("DRAM Hits: %d\n", hits_dram);
-    printf("Hit Rate DRAM: %0.2f%%\n", (((double) hits_dram)/page_accesses) * 100);
+    printf("Hit Rate DRAM: %0.2f%%\n", (((double) hits_dram) / page_accesses) * 100);
     printf("\n");
     printf("DRAM+NVRAM Hits: %d\n", hits_dram + hits_nvram);
-    printf("Hit Rate DRAM+NVRAM: %0.2f%%\n", (((double) (hits_dram+hits_nvram))/page_accesses) * 100);
+    printf("Hit Rate DRAM+NVRAM: %0.2f%%\n", (((double) (hits_dram + hits_nvram)) / page_accesses) * 100);
     printf("\n");
     printf("NVRAM Writes: %d\n", nvram_writes);
+    printf("NVRAM-to-DRAM Write Ratio: %0.2f%%\n", (((double) (nvram_writes) / dram_writes) * 100));
     printf("------------------------\n\n");
 
     return 0;
