@@ -5,10 +5,12 @@ Tries to follow the M-Clock algorithm proposed in https://dl.acm.org/citation.cf
 Made for educational purposes only.
 
 ## Instructions
-```gcc -o mclock *.c
+```
+git clone https://github.com/miguelmarques1904/sim-pageReplacement.git
+gcc -o mclock *.c
 ./mclock [file] [dram_size] [nvram_size]
 ```
-__Note:__ both "dram_size" and "nvram_size" reflect the number of pages allowed for each of the memory types.
+__Note:__ both "dram_size" and "nvram_size" define the number of pages each memory type can hold.
 
 ## File Structure
 The file can have an arbitrary number of lines. One for each page access.
