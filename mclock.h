@@ -4,7 +4,7 @@
 #include <ctype.h>
 
 #define MAX_LINE_SIZE 100
-#define UNSET_INTERVAL 20
+#define UNSET_INTERVAL 100
 
 
 typedef struct pte_t {
