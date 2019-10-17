@@ -11,4 +11,5 @@ Made for educational purposes only.
 __Note:__ both "dram_size" and "nvram_size" reflect the number of pages allowed for each of the memory types.
 
 ## File Structure
-The file should have any number of lines. Each line must contain a page number and an operation ('r' or 'w'). For example: "30 r" for a read operation on page 30.
+The file can have an arbitrary number of lines. One for each page access.
+A line must contain a page number and an operation ('r' or 'w'). For example: "30 r" for a read operation on page 30.
