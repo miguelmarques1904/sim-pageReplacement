@@ -8,10 +8,13 @@ Made for educational purposes only.
 ```
 git clone https://github.com/miguelmarques1904/sim-pageReplacement.git
 gcc -o mclock *.c
+python3 page_gen.py
 ./mclock [file] [dram_size] [nvram_size]
 ```
-__Note:__ both "dram_size" and "nvram_size" define the number of pages each memory type can hold.
+__Note:__ Both "dram_size" and "nvram_size" define the number of pages each memory type can hold.
 
 ## File Structure
 The file can have an arbitrary number of lines. One for each page access.
 A line must contain a page number and an operation ('r' or 'w'). For example: "30 r" for a read operation on page 30.
+
+Use the python script __page_gen.py__ to generate input files for mclock
