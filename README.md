@@ -17,4 +17,4 @@ __Note:__ Both "dram_size" and "nvram_size" define the number of pages each memo
 The file can have an arbitrary number of lines. One for each page access.
 A line must contain a page number and an operation ('r' or 'w'). For example: "30 r" for a read operation on page 30.
 
-Use the python script __page_gen.py__ to generate input files for mclock
+Use the python script __page_gen.py__ to generate input files.
