@@ -53,26 +53,25 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
             (*nvram)[p_hand].reference = 1;
 
             if(!strcmp(rw, "w")) {
-                (*nvram)[p_hand].dirty = 1;
 
                 /*LAZY NVRAM-DRAM MIGRATION*/
-                int j;
-                if((*nvram)[p_hand].lazy) {
-                    printf("LAZY\n");
-                    mclock(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes);
 
-                    (*nvram)[p_hand].value = 0;
-                }
-                else if(!place(page_id, rw, dram, dram_size, dram_writes)) {
-                    printf("NOT LAZY\n");
+                if(!place(page_id, rw, dram, dram_size, dram_writes)) {
                     // DRAM is full and lazy bit is unset
-                    (*nvram_writes)++;
-                    (*nvram)[p_hand].lazy = 1;
-                    ;
 
-                }
-                else {
-                    (*nvram)[p_hand].value = 0;
+                    if((*nvram)[p_hand].lazy) {
+                        printf("LAZY\n");
+                        mclock(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes);
+
+                        (*nvram)[p_hand].value = 0;
+                    }
+                    else {
+                        printf("NOT LAZY\n");
+                        // Overwrite page
+                        (*nvram_writes)++;
+                        (*nvram)[p_hand].lazy = 1;
+                    }
+
                 }
             }
 
