@@ -45,36 +45,43 @@ int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) 
 }
 
 int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *dram_writes, int *nvram_writes) {
-    for(int i=0; i < nvram_size; i++) {
-        if((*nvram)[i].value == page_id) {
-            (*nvram)[i].reference = 1;
+    static int p_hand = 0;
+
+    int viewed_count = 0;
+    while(viewed_count < nvram_size) {
+        if((*nvram)[p_hand].value == page_id) {
+            (*nvram)[p_hand].reference = 1;
 
             if(!strcmp(rw, "w")) {
-                (*nvram)[i].dirty = 1;
+                (*nvram)[p_hand].dirty = 1;
 
                 /*LAZY NVRAM-DRAM MIGRATION*/
                 int j;
-                if((*nvram)[i].lazy) {
+                if((*nvram)[p_hand].lazy) {
                     printf("LAZY\n");
                     mclock(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes);
 
-                    (*nvram)[i].value = 0;
+                    (*nvram)[p_hand].value = 0;
                 }
                 else if(!place(page_id, rw, dram, dram_size, dram_writes)) {
                     printf("NOT LAZY\n");
                     // DRAM is full and lazy bit is unset
                     (*nvram_writes)++;
-                    (*nvram)[i].lazy = 1;
+                    (*nvram)[p_hand].lazy = 1;
                     ;
 
                 }
                 else {
-                    (*nvram)[i].value = 0;
+                    (*nvram)[p_hand].value = 0;
                 }
             }
 
             return 1;
         }
+
+        viewed_count++;
+        p_hand = (p_hand + 1) % nvram_size;
+
     }
 
     return 0;
