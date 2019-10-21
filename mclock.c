@@ -28,13 +28,14 @@ int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) 
     for(int i=0; i < size; i++) {
         if((*table)[i].value == page_id) {
             if(!strcmp(rw, "w")) {
+                if((*table)[i].candidate && (*table)[i].dirty && (*table)[i].reference) {
+                    // Page is classified as hot-dirty
+                    (*table)[i].candidate = 0;
+                }
                 (*table)[i].dirty = 1;
-                (*table)[i].unset_count_dirty = UNSET_INTERVAL;
-
                 (*dram_writes)++;
             }
             (*table)[i].reference = 1;
-            (*table)[i].unset_count_reference = UNSET_INTERVAL;
 
             return 1;
         }
@@ -47,24 +48,19 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
     for(int i=0; i < nvram_size; i++) {
         if((*nvram)[i].value == page_id) {
             (*nvram)[i].reference = 1;
-            (*nvram)[i].unset_count_reference = UNSET_INTERVAL;
 
             if(!strcmp(rw, "w")) {
                 (*nvram)[i].dirty = 1;
-                (*nvram)[i].unset_count_dirty = UNSET_INTERVAL;
 
                 /*LAZY NVRAM-DRAM MIGRATION*/
                 int j;
                 if((*nvram)[i].lazy) {
                     printf("LAZY\n");
-                    while(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes)) {
-                        step(dram, dram_size);
-                        step(nvram, dram_size);
-                    }
+                    mclock(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes);
 
                     (*nvram)[i].value = 0;
                 }
-                else if(!free_dram(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes)) {
+                else if(!place(page_id, rw, dram, dram_size, dram_writes)) {
                     printf("NOT LAZY\n");
                     // DRAM is full and lazy bit is unset
                     (*nvram_writes)++;
@@ -90,12 +86,10 @@ int place(int page_id, char *rw, pte **table, int size, int *dram_writes) {
             (*table)[i].value = page_id;
             if(!strcmp(rw, "w")) {
                 (*table)[i].dirty = 1;
-                (*table)[i].unset_count_dirty = UNSET_INTERVAL;
-
                 (*dram_writes)++;
             }
             (*table)[i].reference = 1;
-            (*table)[i].unset_count_reference = UNSET_INTERVAL;
+            (*table)[i].candidate = 1;
 
             return 1;
         }
@@ -103,60 +97,69 @@ int place(int page_id, char *rw, pte **table, int size, int *dram_writes) {
     return 0;
 }
 
-int free_dram(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size, int *dram_writes) {
-    
-    for(int i=0; i < dram_size; i++) {
-        if(((*dram)[i].dirty == 0) || ((*dram)[i].reference == 0)) {
+int mclock(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size, int *dram_writes) {
+    static int d_hand = 0;
+    static int c_hand = 0;
 
-            // If any of the bits is set, migrate to nvram. Otherwise just reclaim the page
-            if(((*dram)[i].dirty == 1) || ((*dram)[i].reference == 1)) {
-                /* DRAM-NVRAM MIGRATION */
-                for(int j=0; j < nvram_size; j++) {
-                    if(((*nvram)[j].value == 0) || ((*nvram)[j].lazy)) {
-                        (*nvram)[j].value = (*dram)[i].value;
+    // First Step: D-Hand updates pages
+    int viewed_count = 0; // Makes sure that the cycle does not keep going infinitely if all pages are candidates
+    while(viewed_count <= dram_size) {
+        if(!((*dram)[d_hand].candidate)) {
+            viewed_count = 0; // Reset iteration count so that it reaches this page again if needed (to set as candidate)
+            if((*dram)[d_hand].reference) {
+                (*dram)[d_hand].reference = 0;
+            }
+            else {
+                (*dram)[d_hand].candidate = 1;
 
-                        (*nvram)[j].reference = (*dram)[i].reference;
-                        (*nvram)[j].unset_count_reference = (*dram)[i].unset_count_reference;
+                d_hand = (d_hand + 1) % dram_size;
+                break;
+            }
+        }
 
-                        (*nvram)[j].dirty = (*dram)[i].dirty;
-                        (*nvram)[j].unset_count_dirty = (*dram)[i].unset_count_dirty;
+        d_hand = (d_hand + 1) % dram_size;
+        viewed_count++;
+    }
 
-                        (*nvram)[j].lazy = 0;
-                        break;
+    // Second Step: C-Hand chooses victim page
+    while(1) {
+        if((*dram)[c_hand].candidate) {
+            if(((*dram)[c_hand].dirty == 0) || ((*dram)[c_hand].reference == 0)) {
+
+                // If any of the bits is set, migrate to nvram. Otherwise just reclaim the page
+                if(((*dram)[c_hand].dirty == 1) || ((*dram)[c_hand].reference == 1)) {
+                    /* DRAM-NVRAM MIGRATION */
+                    for(int j=0; j < nvram_size; j++) {
+                        if(((*nvram)[j].value == 0) || ((*nvram)[j].lazy)) {
+                            (*nvram)[j].value = (*dram)[c_hand].value;
+
+                            (*nvram)[j].reference = 0;
+                            (*nvram)[j].dirty = 0;
+                            (*nvram)[j].lazy = 0;
+                            break;
+                        }
                     }
+
+                    // What happens if no space is found in the NVRAM is not specified so I assume it just reclaims the page without migration
+
                 }
+                
+                (*dram)[c_hand].value = page_id;
+                if(strcmp(rw, "w")) {
+                    (*dram)[c_hand].dirty = 1;
+                    (*dram_writes)++;
+                }
+                (*dram)[c_hand].reference = 1;
 
+                c_hand = (c_hand + 1) % dram_size;
+                return 1;
             }
-            
-            (*dram)[i].value = page_id;
-            if(strcmp(rw, "w")) {
-                (*dram)[i].dirty = 1;
-                (*dram)[i].unset_count_dirty = UNSET_INTERVAL;
-
-                (*dram_writes)++;
-            }
-            (*dram)[i].reference = 1;
-            (*dram)[i].unset_count_reference = UNSET_INTERVAL;
-            
-            return 1;
-        }
-    }
-    
-    return 0;
-}
-
-void step(pte **table, int size) {
-    for(int i=0; i < size; i++) {
-        if((*table)[i].value != 0) {
-            if((*table)[i].unset_count_reference-- < 0) {
-                (*table)[i].reference = 0;
-                (*table)[i].unset_count_reference = 999; // prevents integer underflow
-            }
-            if((*table)[i].unset_count_dirty-- < 0) {
-                (*table)[i].dirty = 0;
-                (*table)[i].unset_count_dirty = 999;
+            else {
+                (*dram)[c_hand].reference = 0;
             }
         }
+
+        c_hand = (c_hand + 1) % dram_size;
     }
 }
 
@@ -223,16 +226,10 @@ int main(int argc, char** argv) {
             // DRAM full
             // Migrate or free a page from DRAM and place page
             printf("DRAM FULL\n");
-            while(!free_dram(page, rw, &dram, dram_size, &nvram, nvram_size, &dram_writes)) {
-                step(&dram, dram_size);
-                step(&nvram, nvram_size);
-            }
+            mclock(page, rw, &dram, dram_size, &nvram, nvram_size, &dram_writes);
         }
 
         // Otherwise there was free space and page is placed in DRAM
-
-        step(&dram, dram_size);
-        step(&nvram, nvram_size);
     }
     
 
