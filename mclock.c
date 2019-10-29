@@ -1,5 +1,7 @@
 #include "mclock.h"
 
+int dram_size, nvram_size;
+int nvram_writes, dram_writes;
 
 int parse_request(char *line, int *page, char **rw) {
     char *ptr = strtok(line, " \n");
@@ -24,8 +26,8 @@ int parse_request(char *line, int *page, char **rw) {
     return 1;
 }
 
-int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) {
-    for(int i=0; i < size; i++) {
+int locate_dram(int page_id, char *rw, pte **table) {
+    for(int i=0; i < dram_size; i++) {
         if((*table)[i].value == page_id) {
             if(!strcmp(rw, "w")) {
                 if((*table)[i].candidate && (*table)[i].dirty && (*table)[i].reference) {
@@ -33,7 +35,7 @@ int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) 
                     (*table)[i].candidate = 0;
                 }
                 (*table)[i].dirty = 1;
-                (*dram_writes)++;
+                dram_writes++;
             }
             (*table)[i].reference = 1;
 
@@ -44,7 +46,7 @@ int locate_dram(int page_id, char *rw, pte **table, int size, int *dram_writes) 
     return 0;
 }
 
-int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram, int dram_size, int *dram_writes, int *nvram_writes) {
+int locate_nvram(int page_id, char *rw, pte **nvram, pte **dram) {
     static int p_hand = 0;
 
     int viewed_count = 0;
@@ -56,25 +58,26 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
 
                 /*LAZY NVRAM-DRAM MIGRATION*/
 
-                if(!place(page_id, rw, dram, dram_size, dram_writes)) {
+                if(!place(page_id, rw, dram)) {
                     // DRAM is full and lazy bit is unset
 
                     if((*nvram)[p_hand].lazy) {
                         printf("LAZY\n");
-                        mclock(page_id, rw, dram, dram_size, nvram, nvram_size, dram_writes);
+                        mclock(page_id, rw, dram, nvram);
 
                         (*nvram)[p_hand].value = 0;
                     }
                     else {
                         printf("NOT LAZY\n");
                         // Overwrite page
-                        (*nvram_writes)++;
+                        nvram_writes++;
                         (*nvram)[p_hand].lazy = 1;
                     }
 
                 }
             }
 
+            p_hand = (p_hand + 1) % nvram_size;
             return 1;
         }
 
@@ -86,13 +89,13 @@ int locate_nvram(int page_id, char *rw, pte **nvram, int nvram_size, pte **dram,
     return 0;
 }
 
-int place(int page_id, char *rw, pte **table, int size, int *dram_writes) {
-    for(int i=0; i < size; i++) {
+int place(int page_id, char *rw, pte **table) {
+    for(int i=0; i < dram_size; i++) {
         if((*table)[i].value == 0) {
             (*table)[i].value = page_id;
             if(!strcmp(rw, "w")) {
                 (*table)[i].dirty = 1;
-                (*dram_writes)++;
+                dram_writes++;
             }
             (*table)[i].reference = 1;
             (*table)[i].candidate = 1;
@@ -103,7 +106,7 @@ int place(int page_id, char *rw, pte **table, int size, int *dram_writes) {
     return 0;
 }
 
-int mclock(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nvram_size, int *dram_writes) {
+int mclock(int page_id, char *rw, pte **dram, pte **nvram) {
     static int d_hand = 0;
     static int c_hand = 0;
 
@@ -153,7 +156,7 @@ int mclock(int page_id, char *rw, pte **dram, int dram_size, pte **nvram, int nv
                 (*dram)[c_hand].value = page_id;
                 if(strcmp(rw, "w")) {
                     (*dram)[c_hand].dirty = 1;
-                    (*dram_writes)++;
+                    dram_writes++;
                 }
                 (*dram)[c_hand].reference = 1;
 
@@ -184,16 +187,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    int dram_size = atoi(argv[2]);
-    int nvram_size = atoi(argv[3]);
+    dram_size = atoi(argv[2]);
+    nvram_size = atoi(argv[3]);
 
     pte *dram = (pte*) malloc(sizeof(pte) * dram_size);
     pte *nvram = (pte*) malloc(sizeof(pte) * nvram_size);
 
     int hits_dram = 0;
     int hits_nvram = 0;
-    int nvram_writes = 0;
-    int dram_writes = 0;
 
     int page_accesses = 0;
 
@@ -215,12 +216,12 @@ int main(int argc, char** argv) {
 
         page_accesses++;
 
-        if(locate_dram(page, rw, &dram, dram_size, &dram_writes)) {
+        if(locate_dram(page, rw, &dram)) {
             // DRAM Hit
             printf("DRAM HIT\n");
             hits_dram++;
         }
-        else if(locate_nvram(page, rw, &nvram, nvram_size, &dram, dram_size, &dram_writes, &nvram_writes)) {
+        else if(locate_nvram(page, rw, &nvram, &dram)) {
             // NVRAM Hit
             printf("NVRAM HIT\n");
             hits_nvram++;
@@ -228,11 +229,10 @@ int main(int argc, char** argv) {
 
         // DRAM and NVRAM Miss
         // Find free space in DRAM
-        else if(!place(page, rw, &dram, dram_size, &dram_writes)) {
-            // DRAM full
-            // Migrate or free a page from DRAM and place page
+        else if(!place(page, rw, &dram)) {
             printf("DRAM FULL\n");
-            mclock(page, rw, &dram, dram_size, &nvram, nvram_size, &dram_writes);
+            // Migrate or free a page from DRAM and place the new page on the freed space
+            mclock(page, rw, &dram, &nvram);
         }
 
         // Otherwise there was free space and page is placed in DRAM
