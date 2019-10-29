@@ -7,6 +7,7 @@ Made for educational purposes only.
 ## Instructions
 ```
 git clone https://github.com/miguelmarques1904/sim-pageReplacement.git
+cd sim-pageReplacement
 gcc -o mclock *.c
 python3 page_gen.py
 ./mclock [file] [dram_size] [nvram_size]
