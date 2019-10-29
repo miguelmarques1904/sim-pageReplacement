@@ -7,8 +7,6 @@
 #include <ctype.h>
 
 #define MAX_LINE_SIZE 100
-#define VOLATILE_PERCENTAGE 0.2
-
 
 typedef struct pte_t {
     int value;
