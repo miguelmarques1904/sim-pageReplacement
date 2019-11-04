@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
         // DRAM and NVRAM Miss
         // Find free space in DRAM if volatile page
         else if(!persistent) {
-            if(!place_dram(page, rw, &dram)) {
+            if((dram_size > 0) && !place_dram(page, rw, &dram)) {
                 printf("DRAM FULL\n");
                 // Migrate or free a page from DRAM and place the new page on the freed space
                 mclock(page, rw, &dram, &nvram);

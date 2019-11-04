@@ -62,13 +62,13 @@ int locate_nvram(int page_id, char *rw, pte **nvram, pte **dram) {
                     // DRAM is full and lazy bit is unset
 
                     if((*nvram)[p_hand].lazy) {
-                        //printf("LAZY\n");
+                        printf("LAZY\n");
                         mclock(page_id, rw, dram, nvram);
 
                         (*nvram)[p_hand].value = 0;
                     }
                     else {
-                        //printf("NOT LAZY\n");
+                        printf("NOT LAZY\n");
                         // Overwrite page
                         nvram_writes++;
                         (*nvram)[p_hand].lazy = 1;
@@ -214,23 +214,23 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        //printf("Processing request: page-%d op-%s\n", page, rw);
+        printf("Processing request: page-%d op-%s\n", page, rw);
 
         page_accesses++;
 
         if(locate_dram(page, rw, &dram)) {
-            //printf("DRAM HIT\n");
+            printf("DRAM HIT\n");
             hits_dram++;
         }
         else if(locate_nvram(page, rw, &nvram, &dram)) {
-            //printf("NVRAM HIT\n");
+            printf("NVRAM HIT\n");
             hits_nvram++;
         }
 
         // DRAM and NVRAM Miss
         // Find free space in DRAM
-        else if(!place(page, rw, &dram)) {
-            //printf("DRAM FULL\n");
+        else if((dram_size > 0) && !place(page, rw, &dram)) {
+            printf("DRAM FULL\n");
             // Migrate or free a page from DRAM and place the new page on the freed space
             mclock(page, rw, &dram, &nvram);
         }
