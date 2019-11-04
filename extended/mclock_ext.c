@@ -1,9 +1,17 @@
-#include "mclock.h"
+#include "mclock_ext.h"
 
 int dram_size, nvram_size;
 int nvram_writes, dram_writes;
+double vol_percentage;
+int first_persistent_page;
+int max_persistent_pages;
 
-int parse_request(char *line, int *page, char **rw) {
+static int d_hand = 0;
+static int c_hand = 0;
+static int p_hand = 0;
+static int z_hand = 0;
+
+int parse_request(char *line, int *page, char **rw, int *persistent) {
     char *ptr = strtok(line, " \n");
 
     if(ptr == NULL) {
@@ -15,13 +23,26 @@ int parse_request(char *line, int *page, char **rw) {
         return 0;
     }
 
-    ptr = strtok(NULL, " \n");
+    ptr = strtok(NULL, " ");
 
     if((ptr == NULL) || (strcmp(ptr, "w") && strcmp(ptr, "r"))) {
         return 0;
     }
 
     strcpy(*rw, ptr);
+
+    ptr = strtok(NULL, " \n");
+
+    if((ptr == NULL) || (strcmp(ptr, "p") && strcmp(ptr, "np"))) {
+        return 0;
+    }
+
+    if(!strcmp(ptr, "p")) {
+        *persistent = 1;
+    }
+    else {
+        *persistent = 0;
+    }
 
     return 1;
 }
@@ -46,50 +67,64 @@ int locate_dram(int page_id, char *rw, pte **table) {
     return 0;
 }
 
-int locate_nvram(int page_id, char *rw, pte **nvram, pte **dram) {
-    static int p_hand = 0;
+int locate_nvram(int page_id, char *rw, int persistent, pte **nvram, pte **dram) {
 
     int viewed_count = 0;
-    while(viewed_count < nvram_size) {
-        if((*nvram)[p_hand].value == page_id) {
-            (*nvram)[p_hand].reference = 1;
 
-            if(!strcmp(rw, "w")) {
+    if(!persistent) {
+        while(viewed_count < (first_persistent_page)) {
+            if((*nvram)[p_hand].value == page_id) {
+                (*nvram)[p_hand].reference = 1;
 
-                /*LAZY NVRAM-DRAM MIGRATION*/
+                if(!strcmp(rw, "w")) {
 
-                if(!place(page_id, rw, dram)) {
-                    // DRAM is full and lazy bit is unset
+                    /*LAZY NVRAM-DRAM MIGRATION*/
 
-                    if((*nvram)[p_hand].lazy) {
-                        printf("LAZY\n");
-                        mclock(page_id, rw, dram, nvram);
+                    if(!persistent && !place_dram(page_id, rw, dram)) {
+                        // DRAM is full and lazy bit is unset
 
-                        (*nvram)[p_hand].value = 0;
+                        if((*nvram)[p_hand].lazy) {
+                            printf("LAZY\n");
+                            mclock(page_id, rw, dram, nvram);
+
+                            (*nvram)[p_hand].value = 0;
+                        }
+                        else {
+                            printf("NOT LAZY\n");
+                            // Overwrite page
+                            nvram_writes++;
+                            (*nvram)[p_hand].lazy = 1;
+                        }
+
                     }
-                    else {
-                        printf("NOT LAZY\n");
-                        // Overwrite page
-                        nvram_writes++;
-                        (*nvram)[p_hand].lazy = 1;
-                    }
-
                 }
+
+                p_hand = (p_hand + 1) % (first_persistent_page);
+                return 1;
             }
 
-            p_hand = (p_hand + 1) % nvram_size;
-            return 1;
+            viewed_count++;
+            p_hand = (p_hand + 1) % (first_persistent_page);
+
         }
+    }
+    else {
+        for(int i = first_persistent_page; i < nvram_size; i++) {
+            if((*nvram)[i].value == page_id) {
+                if(!strcmp(rw, "w")) {
+                    nvram_writes++;
+                }
+                (*nvram)[i].reference = 1;
 
-        viewed_count++;
-        p_hand = (p_hand + 1) % nvram_size;
-
+                return 1;
+            }
+        }
     }
 
     return 0;
 }
 
-int place(int page_id, char *rw, pte **table) {
+int place_dram(int page_id, char *rw, pte **table) {
     for(int i=0; i < dram_size; i++) {
         if((*table)[i].value == 0) {
             (*table)[i].value = page_id;
@@ -106,10 +141,22 @@ int place(int page_id, char *rw, pte **table) {
     return 0;
 }
 
-int mclock(int page_id, char *rw, pte **dram, pte **nvram) {
-    static int d_hand = 0;
-    static int c_hand = 0;
+int place_nvram(int page_id, char *rw, int persistent, pte **table) {
+    for(int i = first_persistent_page; i < nvram_size; i++) {
+        if((*table)[i].value == 0) {
+            (*table)[i].value = page_id;
+            if(!strcmp(rw, "w")) {
+                nvram_writes++;
+            }
+            (*table)[i].reference = 1;
 
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int mclock(int page_id, char *rw, pte **dram, pte **nvram) {
     // First Step: D-Hand updates pages
     int viewed_count = 0; // Makes sure that the cycle does not keep going infinitely if all pages are candidates
     while(viewed_count <= dram_size) {
@@ -138,7 +185,7 @@ int mclock(int page_id, char *rw, pte **dram, pte **nvram) {
                 // If any of the bits is set, migrate to nvram. Otherwise just reclaim the page
                 if(((*dram)[c_hand].dirty == 1) || ((*dram)[c_hand].reference == 1)) {
                     /* DRAM-NVRAM MIGRATION */
-                    for(int j=0; j < nvram_size; j++) {
+                    for(int j=0; j < first_persistent_page; j++) {
                         if(((*nvram)[j].value == 0) || ((*nvram)[j].lazy)) {
                             (*nvram)[j].value = (*dram)[c_hand].value;
 
@@ -170,27 +217,52 @@ int mclock(int page_id, char *rw, pte **dram, pte **nvram) {
 
         c_hand = (c_hand + 1) % dram_size;
     }
+}
 
-    return 0;
+int clock(int page_id, char *rw, pte **nvram) {
+    while(1) {
+        if((*nvram)[z_hand].reference == 0) {
+            (*nvram)[z_hand].value = page_id;
+
+            if(!strcmp(rw, "w")) {
+                nvram_writes++;
+            }
+
+            (*nvram)[z_hand].reference = 1;
+
+            z_hand = (z_hand + 1) % max_persistent_pages + first_persistent_page;
+            return 1;
+        }
+        else {
+            (*nvram)[z_hand].reference = 0;
+        }
+
+        z_hand = (z_hand + 1) % max_persistent_pages + first_persistent_page;
+    }
 }
 
 
 int main(int argc, char** argv) {
 
-    if(argc != 4) {
-        printf("USAGE: [file] [dram_size] [nvram_size]\n");
+    if(argc != 5) {
+        printf("USAGE: [file] [dram_size] [nvram_size] [volatile_percentage (0-1.0)]\n");
         return 1;
     }
 
     FILE *fp;
 
     if((fp = fopen(argv[1], "r")) == NULL) {
-        printf("File not found. USAGE: [file] [dram_size] [nvram_size]\n");
+        printf("File not found. USAGE: [file] [dram_size] [nvram_size] [volatile_percentage (0-1.0)]\n");
         return 1;
     }
 
     dram_size = atoi(argv[2]);
     nvram_size = atoi(argv[3]);
+    vol_percentage = atof(argv[4]);
+
+    first_persistent_page = (int) (nvram_size * vol_percentage);
+    max_persistent_pages = nvram_size - first_persistent_page;
+    z_hand = first_persistent_page;
 
     pte *dram = (pte*) malloc(sizeof(pte) * dram_size);
     pte *nvram = (pte*) malloc(sizeof(pte) * nvram_size);
@@ -202,40 +274,46 @@ int main(int argc, char** argv) {
 
     char line[MAX_LINE_SIZE];
 
-    int page;
+    int page, persistent;
     char *rw = (char*) malloc(sizeof(char));
 
     while(fgets(line, MAX_LINE_SIZE, fp) != NULL) {
 
-        if(!parse_request(line, &page, &rw)) {
+        if(!parse_request(line, &page, &rw, &persistent)) {
             if(!strcmp("\n", line)) {
                 printf("Malformed Input! Input must match: [page_id] [r|w]\n");
             }
             continue;
         }
 
-        printf("Processing request: page-%d op-%s\n", page, rw);
+        printf("Processing request: page-%d op-%s persistent-%d\n", page, rw, persistent);
 
         page_accesses++;
 
-        if(locate_dram(page, rw, &dram)) {
+        if(!persistent && locate_dram(page, rw, &dram)) {
             printf("DRAM HIT\n");
             hits_dram++;
         }
-        else if(locate_nvram(page, rw, &nvram, &dram)) {
+        else if(locate_nvram(page, rw, persistent, &nvram, &dram)) {
             printf("NVRAM HIT\n");
             hits_nvram++;
         }
 
         // DRAM and NVRAM Miss
-        // Find free space in DRAM
-        else if((dram_size > 0) && !place(page, rw, &dram)) {
-            printf("DRAM FULL\n");
-            // Migrate or free a page from DRAM and place the new page on the freed space
-            mclock(page, rw, &dram, &nvram);
+        // Find free space in DRAM if volatile page
+        else if(!persistent) {
+            if((dram_size > 0) && !place_dram(page, rw, &dram)) {
+                printf("DRAM FULL\n");
+                // Migrate or free a page from DRAM and place the new page on the freed space
+                mclock(page, rw, &dram, &nvram);
+            }
         }
 
-        // Otherwise there was free space and page is placed in DRAM
+        // Find free space in NVRAM if persistent
+        else if((max_persistent_pages > 0) && !place_nvram(page, rw, persistent, &nvram)) {
+                printf("NVRAM FULL\n");
+                clock(page, rw, &nvram);
+        }
     }
 
 
